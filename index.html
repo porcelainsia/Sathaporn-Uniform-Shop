@@ -75,13 +75,24 @@
   main{padding:16px 18px 8px;}
   .hidden{display:none !important;}
 
-  .cat-nav{display:flex; gap:6px; overflow-x:auto; padding-bottom:8px; margin-bottom:6px;}
+  .cat-nav{display:flex; gap:6px; overflow-x:auto; padding-bottom:8px;}
   .cat-chip{
     flex:none; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.06em;
     text-transform:uppercase; color:var(--teal-dark); background:#fff; border:1px solid var(--line);
     border-radius:999px; padding:6px 11px; cursor:pointer; white-space:nowrap;
   }
   .cat-chip.active{background:var(--teal); border-color:var(--teal); color:#fff;}
+  .filter-panel{margin-bottom:8px;}
+  .filter-group{margin-bottom:2px;}
+  .filter-group-label{
+    font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-soft); margin:8px 0 5px;
+  }
+  .clear-filter-btn{
+    display:block; margin:6px 0 2px; background:none; border:1px dashed var(--out); border-radius:8px;
+    padding:6px 10px; font-size:11px; color:var(--ink-soft); cursor:pointer;
+    font-family:'IBM Plex Sans Thai',sans-serif;
+  }
 
   .cat-label{
     font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase;
@@ -350,25 +361,37 @@ const SIGIL_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAAC3CAYAAAD
 document.getElementById('sigilImg').src = SIGIL_B64;
 
 /* ---------------- Catalog (from the counting sheet) ---------------- */
+/* outfit: which "ประเภทชุด" group a category belongs to.
+   genders: which "เพศ" chip(s) a category matches (PE sets are unisex, so both). */
 const CATEGORIES = [
-  { key:"shirt_f",  label:"เสื้อนักเรียนหญิง",   sub:"ประถม",
+  { key:"shirt_f",  label:"เสื้อนักเรียนหญิง",   sub:"ประถม", outfit:"student_primary", genders:["หญิง"],
     sizes:["30","32","34","36","38","40","42","44","46","48","50"] },
-  { key:"shirt_m",  label:"เสื้อนักเรียนชาย",    sub:"ประถม",
+  { key:"shirt_m",  label:"เสื้อนักเรียนชาย",    sub:"ประถม", outfit:"student_primary", genders:["ชาย"],
     sizes:["30","32","34","36","38","40","42","44","46","48","50"] },
-  { key:"skirt",    label:"กระโปรงนักเรียนหญิง",  sub:"อนุบาลและประถม",
+  { key:"skirt",    label:"กระโปรงนักเรียนหญิง",  sub:"อนุบาลและประถม", outfit:"student_primary", genders:["หญิง"],
     sizes:["20","21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36","37","38","39","40"] },
-  { key:"pants_m",  label:"กางเกงนักเรียนชาย",    sub:"อนุบาลและประถม",
+  { key:"pants_m",  label:"กางเกงนักเรียนชาย",    sub:"อนุบาลและประถม", outfit:"student_primary", genders:["ชาย"],
     sizes:["20","21","22","23","24","25","26","27","28","29","30","31","32","33","34","35","36","37","38","39","40"] },
-  { key:"pe_shirt", label:"เสื้อพละ",            sub:"ประถม",
+  { key:"pe_shirt", label:"เสื้อพละ",            sub:"ประถม", outfit:"pe_primary", genders:["หญิง","ชาย"],
     sizes:["1","2","3","4","5","S","M","L","XL"] },
-  { key:"pe_pants", label:"กางเกงพละ",           sub:"ประถม",
+  { key:"pe_pants", label:"กางเกงพละ",           sub:"ประถม", outfit:"pe_primary", genders:["หญิง","ชาย"],
     sizes:["1","2","3","4","5","S","M","L","XL"] },
-  { key:"kg_girl",  label:"ชุดนักเรียนอนุบาลหญิง", sub:"อนุบาล",
+  { key:"kg_girl",  label:"ชุดนักเรียนอนุบาลหญิง", sub:"อนุบาล", outfit:"student_kg", genders:["หญิง"],
     sizes:["1","2","3","4","5","S","M","L"] },
-  { key:"kg_boy",   label:"ชุดนักเรียนอนุบาลชาย",  sub:"อนุบาล",
+  { key:"kg_boy",   label:"ชุดนักเรียนอนุบาลชาย",  sub:"อนุบาล", outfit:"student_kg", genders:["ชาย"],
     sizes:["1","2","3","4","5","S","M","L"] },
-  { key:"kg_pe",    label:"ชุดพละอนุบาล",         sub:"อนุบาล",
+  { key:"kg_pe",    label:"ชุดพละอนุบาล",         sub:"อนุบาล", outfit:"pe_kg", genders:["หญิง","ชาย"],
     sizes:["1","2","3","4","5","S","M","L","XL"] },
+];
+const OUTFIT_GROUPS = [
+  { key:"student_primary", label:"ชุดนักเรียนประถม" },
+  { key:"student_kg",      label:"ชุดนักเรียนอนุบาล" },
+  { key:"pe_primary",      label:"ชุดพละประถม" },
+  { key:"pe_kg",           label:"ชุดพละอนุบาล" },
+];
+const GENDER_GROUPS = [
+  { key:"หญิง", label:"หญิง" },
+  { key:"ชาย",  label:"ชาย" },
 ];
 function pid(catKey,size){ return catKey+"_"+size; }
 
@@ -492,6 +515,10 @@ let myName = localStorage.getItem('uniform_myName') || '';
 let adminUnlocked = false;
 let activeTab = 'sell';
 let openDay = null;
+let filterCats = new Set();
+let filterOutfits = new Set();
+let filterGenders = new Set();
+let resetScrollNext = false;
 let summaryDate = todayKey();
 let dayTransactions = [];
 let unsubDay = null;
@@ -599,15 +626,45 @@ function cartTotal(){
   return cartIds().reduce((s,id)=> s + (PRODUCTS[id]?.price||0) * cart[id], 0);
 }
 
+function categoryVisible(cat){
+  if (filterCats.size && !filterCats.has(cat.key)) return false;
+  if (filterOutfits.size && !filterOutfits.has(cat.outfit)) return false;
+  if (filterGenders.size && !cat.genders.some(g=>filterGenders.has(g))) return false;
+  return true;
+}
+function anyFilterActive(){
+  return filterCats.size || filterOutfits.size || filterGenders.size;
+}
+
 function renderSell(){
   const el = document.getElementById('tab-sell');
   const scrollY = window.scrollY;
-  let html = `<div class="cat-nav">`;
-  CATEGORIES.forEach(c=> html += `<div class="cat-chip" data-jump="${c.key}">${c.label}</div>`);
+
+  let html = `<div class="filter-panel">
+    <div class="filter-group">
+      <div class="filter-group-label">หมวดหมู่สินค้า</div>
+      <div class="cat-nav">`;
+  CATEGORIES.forEach(c=> html += `<div class="cat-chip ${filterCats.has(c.key)?'active':''}" data-filter="cat" data-val="${c.key}">${c.label}</div>`);
+  html += `</div></div>
+    <div class="filter-group">
+      <div class="filter-group-label">ประเภทชุด</div>
+      <div class="cat-nav">`;
+  OUTFIT_GROUPS.forEach(o=> html += `<div class="cat-chip ${filterOutfits.has(o.key)?'active':''}" data-filter="outfit" data-val="${o.key}">${o.label}</div>`);
+  html += `</div></div>
+    <div class="filter-group">
+      <div class="filter-group-label">เพศ</div>
+      <div class="cat-nav">`;
+  GENDER_GROUPS.forEach(g=> html += `<div class="cat-chip ${filterGenders.has(g.key)?'active':''}" data-filter="gender" data-val="${g.key}">${g.label}</div>`);
+  html += `</div></div>`;
+  if (anyFilterActive()) html += `<button class="clear-filter-btn" id="clearFiltersBtn">✕ ล้างตัวกรองทั้งหมด</button>`;
   html += `</div>`;
 
-  CATEGORIES.forEach(cat=>{
-    html += `<div class="cat-label" id="jump-${cat.key}">${cat.label}</div><div class="cat-sub">${cat.sub}</div><div class="grid">`;
+  const visibleCats = CATEGORIES.filter(categoryVisible);
+  if (!visibleCats.length){
+    html += `<div class="empty-note">ไม่มีสินค้าตรงกับตัวกรองที่เลือก</div>`;
+  }
+  visibleCats.forEach(cat=>{
+    html += `<div class="cat-label">${cat.label}</div><div class="cat-sub">${cat.sub}</div><div class="grid">`;
     cat.sizes.forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, remaining:0};
@@ -652,12 +709,23 @@ function renderSell(){
   </div>`;
 
   el.innerHTML = html;
-  window.scrollTo(0, scrollY);
+  if (resetScrollNext){ window.scrollTo(0,0); resetScrollNext = false; }
+  else window.scrollTo(0, scrollY);
 
   el.querySelectorAll('.cat-chip').forEach(chip=>{
     chip.addEventListener('click', ()=>{
-      document.getElementById('jump-'+chip.dataset.jump).scrollIntoView({behavior:'smooth', block:'start'});
+      const set = chip.dataset.filter==='cat' ? filterCats : chip.dataset.filter==='outfit' ? filterOutfits : filterGenders;
+      const val = chip.dataset.val;
+      if (set.has(val)) set.delete(val); else set.add(val);
+      resetScrollNext = true;
+      renderSell();
     });
+  });
+  const clearBtn2 = document.getElementById('clearFiltersBtn');
+  if (clearBtn2) clearBtn2.addEventListener('click', ()=>{
+    filterCats.clear(); filterOutfits.clear(); filterGenders.clear();
+    resetScrollNext = true;
+    renderSell();
   });
   el.querySelectorAll('.item-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
