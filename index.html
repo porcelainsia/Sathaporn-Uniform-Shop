@@ -1216,22 +1216,28 @@ function renderSummary(){
 function copyDayText(dk){
   const list = allTransactions.filter(t=>t.date===dk).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
   if (!list.length){ toast('ไม่มีข้อมูลให้คัดลอก'); return; }
-  let lines = [`ยอดขายเครื่องแบบ วันที่ ${dk}`, ''];
+  // Tab-separated, one row per item, same column order as the Excel export:
+  // รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
+  const lines = [["รหัส","ชื่อสินค้า","ไซส์","ราคา","จำนวน","สด","โอน","เวลา"].join('\t')];
+  let sumCash = 0, sumTransfer = 0;
   list.forEach(t=>{
-    const itemsStr = (t.items||[]).map(it=>`${it.categoryLabel} ไซส์ ${it.size} x${it.qty} = ${baht(it.subtotal)}`).join(', ');
-    lines.push(`${t.time} | รหัส ${t.studentCode||'-'} | ${t.seller} | ${t.payment} | ${itemsStr} | รวม ${baht(t.total)}`);
+    (t.items||[]).forEach(it=>{
+      const cashAmt = t.payment==='โอน' ? '' : it.subtotal;
+      const transferAmt = t.payment==='โอน' ? it.subtotal : '';
+      if (t.payment==='โอน') sumTransfer += it.subtotal; else sumCash += it.subtotal;
+      lines.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt, transferAmt, t.time].join('\t'));
+    });
   });
-  const total = list.reduce((s,t)=>s+(t.total||0),0);
-  lines.push('', `ยอดรวมทั้งสิ้น: ${baht(total)}`);
+  lines.push(["","","","","ยอดเงินรวม", sumCash, sumTransfer, ""].join('\t'));
   navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('คัดลอกแล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
 }
 
 function downloadXlsx(dk){
   const list = allTransactions.filter(t=>t.date===dk).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
   if (!list.length){ toast('ไม่มีข้อมูลให้ดาวน์โหลด'); return; }
-  // One row per item per transaction (not aggregated) — matches the "ยอดขายเครื่องแบบนักเรียน"
-  // table in the financial report: รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
-  const rows = [["รหัส","ชื่อสินค้า","ไซส์","ราคา","จำนวน","สด","โอน","เวลา"]];
+  // Date sits one row above the header, then one row per item (not aggregated) —
+  // matches the "ยอดขายเครื่องแบบนักเรียน" table: รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
+  const rows = [[dk], ["รหัส","ชื่อสินค้า","ไซส์","ราคา","จำนวน","สด","โอน","เวลา"]];
   let sumCash = 0, sumTransfer = 0;
   list.forEach(t=>{
     (t.items||[]).forEach(it=>{
