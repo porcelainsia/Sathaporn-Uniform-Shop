@@ -203,13 +203,21 @@
     font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
     color:var(--teal-dark); margin:12px 0 6px; padding-top:8px; border-top:1px dashed var(--line);
   }
-  .time-log-row{padding:6px 0; border-bottom:1px dotted var(--line);}
+  .time-log-row{padding:6px 0; border-bottom:1px dotted var(--line); position:relative;}
   .time-log-row:last-child{border-bottom:none;}
-  .time-log-row .tl-top{display:flex; justify-content:space-between; font-size:12px;}
+  .time-log-row .tl-top{display:flex; justify-content:space-between; font-size:12px; padding-right:26px;}
   .time-log-row .tl-time{font-family:'IBM Plex Mono',monospace; color:var(--ink); font-weight:600;}
   .time-log-row .tl-seller{color:var(--ink-soft); font-size:11.5px;}
-  .time-log-row .tl-items{font-size:11.5px; color:var(--ink-soft); margin-top:2px;}
+  .time-log-row .tl-items{font-size:11.5px; color:var(--ink-soft); margin-top:2px; padding-right:26px;}
   .time-log-row .tl-actions{display:flex; gap:8px; margin-top:6px;}
+  .tl-quick-edit{
+    position:absolute; top:4px; right:0; width:22px; height:22px; border-radius:50%;
+    border:1px solid var(--line); background:#fff; color:var(--teal-dark); font-size:11px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .tl-quick-edit:active{background:var(--paper-dark);}
+  .se-field-row{display:flex; gap:10px; margin-bottom:10px;}
+  .se-field-row > div{flex:1;}
   .time-log-row .tl-actions button{
     font-size:11px; padding:4px 9px; border-radius:7px; border:1px solid var(--line);
     background:var(--paper); cursor:pointer; font-family:'IBM Plex Sans Thai',sans-serif; color:var(--ink-soft);
@@ -574,6 +582,7 @@ let allTransactions = [];
 let editDataMode = false;      // false | dateKey string | '__all__'
 let editingSaleId = null;
 let editingSaleItems = null;   // array of {productId,category,categoryLabel,size,price,qty}
+let editingSaleMeta = null;    // {studentCode, payment, time}
 
 function todayKey(){
   const d = new Date();
@@ -959,6 +968,13 @@ async function deleteWholeTxn(t){
   await deleteDoc(doc(db,'uniform_transactions', t.id));
 }
 
+function openSaleEditor(t){
+  editingSaleId = t.id;
+  editingSaleItems = (t.items||[]).map(i=>({...i}));
+  editingSaleMeta = { studentCode: t.studentCode||'', payment: t.payment||'สด', time: t.time||'' };
+  renderSummary();
+}
+
 function renderSummary(){
   const el = document.getElementById('tab-summary');
   const tKey = todayKey();
@@ -977,54 +993,62 @@ function renderSummary(){
     <div class="stat-card"><div class="k">รับโอนวันนี้</div><div class="v">${baht(transfer)}</div></div>
   </div>`;
 
-  if (editDataMode){
+  if (editingSaleId){
+    const t = allTransactions.find(x=>x.id===editingSaleId);
+    const liveTotal = (editingSaleItems||[]).reduce((s,i)=>s+i.qty*i.price,0);
+    html += `<div class="edit-mode-note"><span>แก้ไขรายการ — ${t?t.date:''}</span><button id="cancelSaleEdit">ยกเลิก</button></div>`;
+    html += `<div class="sale-editor">`;
+    html += `<div class="se-field-row">
+      <div><label class="small">รหัสนักเรียน</label><input type="text" id="seStudentCode" value="${escapeHtml(editingSaleMeta.studentCode)}" placeholder="รหัสนักเรียน"></div>
+      <div><label class="small">เวลา</label><input type="text" id="seTime" value="${escapeHtml(editingSaleMeta.time)}" placeholder="เช่น 13:45"></div>
+    </div>`;
+    html += `<div style="margin-bottom:12px;">
+      <label class="small">วิธีชำระเงิน</label>
+      <div class="pay-row" style="margin-top:4px;">
+        <div class="pay-chip ${editingSaleMeta.payment!=='โอน'?'active':''}" data-se-pay="สด">💵 สด</div>
+        <div class="pay-chip ${editingSaleMeta.payment==='โอน'?'active':''}" data-se-pay="โอน">📱 โอน</div>
+      </div>
+    </div>`;
+    if (!editingSaleItems || !editingSaleItems.length){
+      html += `<div class="empty-note">ไม่มีสินค้าในรายการนี้</div>`;
+    } else {
+      editingSaleItems.forEach((i,idx)=>{
+        html += `<div class="cart-row">
+          <div class="cname">${i.categoryLabel}<div class="sub">ไซส์ ${i.size} · ${baht(i.price)}/ชิ้น</div></div>
+          <div class="qty-ctrl">
+            <button data-se-dec="${idx}">−</button><span>${i.qty}</span><button data-se-inc="${idx}">+</button>
+          </div>
+          <div class="csub">${baht(i.price*i.qty)}</div>
+        </div>`;
+      });
+    }
+    html += `<button class="add-item-btn" id="seAddItem">+ เพิ่มสินค้า</button>`;
+    html += `<div class="total-row"><div class="label">รวมทั้งสิ้น</div><div class="amount">${baht(liveTotal)}</div></div>`;
+    html += `<button class="save-btn" id="seSaveEdit">บันทึกการแก้ไข</button>`;
+    html += `</div>`;
+  } else if (editDataMode){
     const dk = editDataMode === '__all__' ? null : editDataMode;
     const scoped = dk ? allTransactions.filter(t=>t.date===dk) : allTransactions;
     const label = dk || 'ทุกวันที่ผ่านมา';
-
-    if (editingSaleId){
-      const t = allTransactions.find(x=>x.id===editingSaleId);
-      const liveTotal = (editingSaleItems||[]).reduce((s,i)=>s+i.qty*i.price,0);
-      html += `<div class="edit-mode-note"><span>แก้ไขรายการ — ${t?t.date:''} · ${t?t.time:''}${t&&t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span><button id="cancelSaleEdit">ยกเลิก</button></div>`;
-      html += `<div class="sale-editor">`;
-      if (!editingSaleItems || !editingSaleItems.length){
-        html += `<div class="empty-note">ไม่มีสินค้าในรายการนี้</div>`;
-      } else {
-        editingSaleItems.forEach((i,idx)=>{
-          html += `<div class="cart-row">
-            <div class="cname">${i.categoryLabel}<div class="sub">ไซส์ ${i.size} · ${baht(i.price)}/ชิ้น</div></div>
-            <div class="qty-ctrl">
-              <button data-se-dec="${idx}">−</button><span>${i.qty}</span><button data-se-inc="${idx}">+</button>
-            </div>
-            <div class="csub">${baht(i.price*i.qty)}</div>
-          </div>`;
-        });
-      }
-      html += `<button class="add-item-btn" id="seAddItem">+ เพิ่มสินค้า</button>`;
-      html += `<div class="total-row"><div class="label">รวมทั้งสิ้น</div><div class="amount">${baht(liveTotal)}</div></div>`;
-      html += `<button class="save-btn" id="seSaveEdit">บันทึกการแก้ไข</button>`;
-      html += `</div>`;
+    html += `<div class="edit-mode-note"><span>โหมดแก้ไข — ${label}</span><button id="closeEditMode">ปิดโหมดนี้</button></div>`;
+    const sorted = [...scoped].sort((a,b)=> (b.date+' '+b.time).localeCompare(a.date+' '+a.time));
+    if (!sorted.length){
+      html += `<div class="empty-note">ไม่มีรายการขายในช่วงที่เลือก</div>`;
     } else {
-      html += `<div class="edit-mode-note"><span>โหมดแก้ไข — ${label}</span><button id="closeEditMode">ปิดโหมดนี้</button></div>`;
-      const sorted = [...scoped].sort((a,b)=> (b.date+' '+b.time).localeCompare(a.date+' '+a.time));
-      if (!sorted.length){
-        html += `<div class="empty-note">ไม่มีรายการขายในช่วงที่เลือก</div>`;
-      } else {
-        sorted.forEach(t=>{
-          const itemsStr = (t.items||[]).map(i=>`${i.categoryLabel} ไซส์ ${i.size} x${i.qty}`).join(', ');
-          html += `<div class="sale-entry">
-            <div class="se-top">
-              <span class="se-meta">${t.date} · ${t.time}${t.seller?' · '+escapeHtml(t.seller):''}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
-              <span class="se-total">${baht(t.total)}</span>
-            </div>
-            <div class="se-items">${itemsStr}</div>
-            <div class="se-actions">
-              <button class="se-editbtn" data-editsale="${t.id}">✎ แก้ไขรายการ</button>
-              <button class="se-del" data-sale="${t.id}">🗑 ลบทั้งหมด</button>
-            </div>
-          </div>`;
-        });
-      }
+      sorted.forEach(t=>{
+        const itemsStr = (t.items||[]).map(i=>`${i.categoryLabel} ไซส์ ${i.size} x${i.qty}`).join(', ');
+        html += `<div class="sale-entry">
+          <div class="se-top">
+            <span class="se-meta">${t.date} · ${t.time}${t.seller?' · '+escapeHtml(t.seller):''}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
+            <span class="se-total">${baht(t.total)}</span>
+          </div>
+          <div class="se-items">${itemsStr}</div>
+          <div class="se-actions">
+            <button class="se-editbtn" data-editsale="${t.id}">✎ แก้ไขรายการ</button>
+            <button class="se-del" data-sale="${t.id}">🗑 ลบทั้งหมด</button>
+          </div>
+        </div>`;
+      });
     }
   } else {
     const byDay = {};
@@ -1055,6 +1079,7 @@ function renderSummary(){
               const seller = t.seller || 'ไม่ระบุชื่อ';
               const itemsStr = (t.items||[]).map(i=>`${i.categoryLabel} #${i.size} x${i.qty}`).join(', ');
               return `<div class="time-log-row">
+                <button class="tl-quick-edit" data-quickedit="${t.id}" title="แก้ไขรายการนี้">✎</button>
                 <div class="tl-top"><span class="tl-time">🕐 ${t.time||''}</span><span class="tl-seller">${escapeHtml(seller)} · ${t.payment||'สด'}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span></div>
                 <div class="tl-items">${itemsStr}</div>
               </div>`;
@@ -1085,6 +1110,12 @@ function renderSummary(){
   el.querySelectorAll('[data-xlsxday]').forEach(b=>b.addEventListener('click', e=>{
     e.stopPropagation();
     downloadXlsx(b.dataset.xlsxday);
+  }));
+  el.querySelectorAll('[data-quickedit]').forEach(b=>b.addEventListener('click', e=>{
+    e.stopPropagation();
+    const t = allTransactions.find(x=>x.id===b.dataset.quickedit);
+    if (!t) return;
+    requireAdmin(()=> openSaleEditor(t));
   }));
 
   const editBtn = document.getElementById('editDataBtn');
@@ -1124,9 +1155,7 @@ function renderSummary(){
   el.querySelectorAll('[data-editsale]').forEach(b=>b.addEventListener('click', ()=>{
     const t = allTransactions.find(x=>x.id===b.dataset.editsale);
     if (!t) return;
-    editingSaleId = t.id;
-    editingSaleItems = (t.items||[]).map(i=>({...i}));
-    renderSummary();
+    openSaleEditor(t);
   }));
   el.querySelectorAll('[data-se-inc]').forEach(b=>b.addEventListener('click', ()=>{
     const it = editingSaleItems[Number(b.dataset.seInc)];
@@ -1139,12 +1168,22 @@ function renderSummary(){
     if (it){ it.qty -= 1; if (it.qty<=0) editingSaleItems.splice(idx,1); }
     renderSummary();
   }));
+  el.querySelectorAll('[data-se-pay]').forEach(b=>b.addEventListener('click', ()=>{
+    editingSaleMeta.payment = b.dataset.sePay;
+    renderSummary();
+  }));
+  const seStudentCode = document.getElementById('seStudentCode');
+  if (seStudentCode) seStudentCode.addEventListener('input', e=>{ editingSaleMeta.studentCode = e.target.value; });
+  const seTime = document.getElementById('seTime');
+  if (seTime) seTime.addEventListener('input', e=>{ editingSaleMeta.time = e.target.value; });
   const cancelSaleEdit = document.getElementById('cancelSaleEdit');
-  if (cancelSaleEdit) cancelSaleEdit.addEventListener('click', ()=>{ editingSaleId=null; editingSaleItems=null; renderSummary(); });
+  if (cancelSaleEdit) cancelSaleEdit.addEventListener('click', ()=>{ editingSaleId=null; editingSaleItems=null; editingSaleMeta=null; renderSummary(); });
   const seAddItem = document.getElementById('seAddItem');
   if (seAddItem) seAddItem.addEventListener('click', ()=>{ openProductPicker(editingSaleItems, ()=>renderSummary()); });
   const seSaveEdit = document.getElementById('seSaveEdit');
   if (seSaveEdit) seSaveEdit.addEventListener('click', ()=>{
+    const codeVal = (editingSaleMeta.studentCode||'').trim();
+    if (!codeVal){ toast('กรุณากรอกรหัสนักเรียนก่อนบันทึก'); return; }
     openConfirm('ยืนยันการแก้ไข', 'บันทึกการเปลี่ยนแปลงรายการขายนี้? สต็อกจะถูกปรับตามส่วนต่างโดยอัตโนมัติ', async ()=>{
       const t = allTransactions.find(x=>x.id===editingSaleId);
       if (!t) return;
@@ -1156,14 +1195,19 @@ function renderSummary(){
           toast('ลบรายการแล้ว (ไม่มีสินค้าเหลือ)');
         } else {
           const total = finalItems.reduce((s,i)=>s+i.subtotal,0);
-          await updateDoc(doc(db,'uniform_transactions', t.id), { items: finalItems, total });
+          await updateDoc(doc(db,'uniform_transactions', t.id), {
+            items: finalItems, total,
+            studentCode: codeVal,
+            payment: editingSaleMeta.payment || 'สด',
+            time: (editingSaleMeta.time||'').trim() || t.time
+          });
           toast('บันทึกการแก้ไขแล้ว');
         }
       }catch(e){
         console.error(e);
         toast('บันทึกไม่สำเร็จ');
       }
-      editingSaleId = null; editingSaleItems = null;
+      editingSaleId = null; editingSaleItems = null; editingSaleMeta = null;
       renderSummary();
     });
   });
