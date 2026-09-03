@@ -37,13 +37,13 @@
     position:sticky; top:0; z-index:5;
   }
   header .htop{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
-  header .sigil{width:52px; height:52px; flex-shrink:0; margin-top:2px; object-fit:contain;}
+  header .sigil{width:52px; height:52px; flex-shrink:0; margin-top:2px;}
   header .eyebrow{
     font-family:'IBM Plex Mono',monospace;
-    font-size:14px; letter-spacing:.03em; text-transform:uppercase;
+    font-size:15px; letter-spacing:.03em; text-transform:uppercase;
     color:var(--stamp); font-weight:600; line-height:1.3;
   }
-  header h1{margin:2px 0 2px; font-size:22px; font-weight:700; letter-spacing:.01em;}
+  header h1{margin:2px 0 2px; font-size:24px; font-weight:700; letter-spacing:.01em;}
   header .date{font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink-soft);}
   .date-row{display:flex; align-items:center; justify-content:space-between; margin-top:2px;}
   .refresh-btn{
@@ -358,7 +358,7 @@
     <div class="htop">
       <div class="htext">
         <div class="eyebrow">สหกรณ์โรงเรียนสถาพรศึกษา</div>
-        <h1>เครื่องแบบนักเรียน</h1>
+        <h1>ร้านขายเครื่องแบบ</h1>
       </div>
       <img class="sigil" id="sigilImg" alt="ตราโรงเรียน">
     </div>
@@ -1216,19 +1216,16 @@ function renderSummary(){
 function copyDayText(dk){
   const list = allTransactions.filter(t=>t.date===dk).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
   if (!list.length){ toast('ไม่มีข้อมูลให้คัดลอก'); return; }
-  // Tab-separated, one row per item, same column order as the Excel export:
-  // รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
-  const lines = [["รหัส","ชื่อสินค้า","ไซส์","ราคา","จำนวน","สด","โอน","เวลา"].join('\t')];
-  let sumCash = 0, sumTransfer = 0;
+  // Tab-separated, one row per item, content only (no header row, no total row) —
+  // same column order as the Excel export: รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
+  const lines = [];
   list.forEach(t=>{
     (t.items||[]).forEach(it=>{
       const cashAmt = t.payment==='โอน' ? '' : it.subtotal;
       const transferAmt = t.payment==='โอน' ? it.subtotal : '';
-      if (t.payment==='โอน') sumTransfer += it.subtotal; else sumCash += it.subtotal;
       lines.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt, transferAmt, t.time].join('\t'));
     });
   });
-  lines.push(["","","","","ยอดเงินรวม", sumCash, sumTransfer, ""].join('\t'));
   navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('คัดลอกแล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
 }
 
