@@ -690,7 +690,7 @@ function stockClass(remaining){
   if (remaining<=LOW_STOCK) return 'low';
   return '';
 }
-function cartIds(){ return Object.keys(cart).filter(id=>cart[id]>0); }
+function cartIds(){ return Object.keys(cart).filter(id=>!id.startsWith('__') && cart[id]>0); }
 function cartTotal(){
   return cartIds().reduce((s,id)=> s + (PRODUCTS[id]?.price||0) * cart[id], 0);
 }
