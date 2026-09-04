@@ -597,7 +597,7 @@ let allTransactions = [];
 let editDataMode = false;      // false | dateKey string | '__all__'
 let editingSaleId = null;
 let editingSaleItems = null;   // array of {productId,category,categoryLabel,size,price,qty}
-let editingSaleMeta = null;    // {studentCode, payment, time}
+let editingSaleMeta = null;    // {studentCode, transferAmount, time}
 
 function todayKey(){
   const d = new Date();
@@ -608,6 +608,24 @@ function nowTime(){
   return new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
 }
 function baht(n){ return '฿' + (Number(n)||0).toLocaleString('th-TH', {maximumFractionDigits:2}); }
+/* Reads a transaction's cash/transfer split. Falls back for older records
+   that only have a 'payment' string (สด/โอน) instead of split amounts. */
+function getSplit(t){
+  if (typeof t.transferAmount === 'number' || typeof t.cashAmount === 'number'){
+    const transfer = Number(t.transferAmount)||0;
+    const cash = typeof t.cashAmount === 'number' ? Number(t.cashAmount) : Math.max(0,(t.total||0)-transfer);
+    return { cash, transfer };
+  }
+  const total = t.total||0;
+  return t.payment === 'โอน' ? { cash:0, transfer:total } : { cash:total, transfer:0 };
+}
+function paymentSummary(t){
+  const { cash, transfer } = getSplit(t);
+  const parts = [];
+  if (cash>0) parts.push('สด '+baht(cash));
+  if (transfer>0) parts.push('โอน '+baht(transfer));
+  return parts.length ? parts.join(' · ') : 'สด '+baht(0);
+}
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -791,15 +809,19 @@ function renderSell(){
         <div class="csub">${baht(p.price*qty)}</div>
       </div>`;
     });
-    html += `<div class="pay-row">
-      <div class="pay-chip ${cart.__pay!=='โอน'?'active':''}" data-pay="สด">💵 สด</div>
-      <div class="pay-chip ${cart.__pay==='โอน'?'active':''}" data-pay="โอน">📱 โอน</div>
+    const total = cartTotal();
+    const transferVal = Math.max(0, Math.min(Number(cart.__transferAmount)||0, total));
+    const cashVal = total - transferVal;
+    html += `<div style="margin-top:12px;">
+      <label class="small">จำนวนเงินโอน (ที่เหลือถือเป็นเงินสด)</label>
+      <input type="number" id="transferAmountInput" min="0" step="0.01" placeholder="0" value="${cart.__transferAmount||''}">
+      <div id="splitPreview" style="font-size:11.5px; color:var(--ink-soft); margin-top:5px; font-family:'IBM Plex Mono',monospace;">เงินสด ${baht(cashVal)} · เงินโอน ${baht(transferVal)}</div>
     </div>`;
     html += `<div style="margin-top:12px;">
       <label class="small">รหัสนักเรียน</label>
       <input type="text" id="studentCodeInput" placeholder="กรอกรหัสนักเรียนก่อนบันทึก" value="${escapeHtml(cart.__studentCode||'')}">
     </div>`;
-    html += `<div class="total-row"><div class="label">รวมทั้งสิ้น</div><div class="amount">${baht(cartTotal())}</div></div>`;
+    html += `<div class="total-row"><div class="label">รวมทั้งสิ้น</div><div class="amount">${baht(total)}</div></div>`;
   }
   html += `<button class="save-btn" id="saveSaleBtn" ${ids.length?'':'disabled'}>บันทึกการขาย</button>
   </div>`;
@@ -834,7 +856,15 @@ function renderSell(){
   el.querySelectorAll('[data-minus]').forEach(b=>b.addEventListener('click',()=>{
     const id = b.dataset.minus; cart[id]--; if (cart[id]<=0) delete cart[id]; renderSell();
   }));
-  el.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click',()=>{ cart.__pay = b.dataset.pay; renderSell(); }));
+  const transferInput = document.getElementById('transferAmountInput');
+  if (transferInput) transferInput.addEventListener('input', e=>{
+    cart.__transferAmount = e.target.value;
+    const total = cartTotal();
+    const transferVal = Math.max(0, Math.min(Number(cart.__transferAmount)||0, total));
+    const cashVal = total - transferVal;
+    const preview = document.getElementById('splitPreview');
+    if (preview) preview.textContent = `เงินสด ${baht(cashVal)} · เงินโอน ${baht(transferVal)}`;
+  });
   const codeInput = document.getElementById('studentCodeInput');
   if (codeInput) codeInput.addEventListener('input', e=>{ cart.__studentCode = e.target.value; });
   const clearBtn = document.getElementById('clearCart');
@@ -859,11 +889,13 @@ async function saveSale(){
       return { productId:id, category:p.category, categoryLabel:p.categoryLabel, size:p.size, price:p.price, qty, subtotal:p.price*qty };
     });
     const total = items.reduce((s,it)=>s+it.subtotal,0);
+    const transferAmount = Math.max(0, Math.min(Number(cart.__transferAmount)||0, total));
+    const cashAmount = total - transferAmount;
     for (const it of items){
       await updateDoc(doc(db,'uniform_products',it.productId), { remaining: increment(-it.qty) });
     }
     await addDoc(collection(db,'uniform_transactions'), {
-      date: todayKey(), time: nowTime(), seller: myName, payment: cart.__pay || 'สด', studentCode,
+      date: todayKey(), time: nowTime(), seller: myName, cashAmount, transferAmount, studentCode,
       items, total, createdAt: serverTimestamp()
     });
     cart = {};
@@ -994,7 +1026,7 @@ async function deleteWholeTxn(t){
 function openSaleEditor(t){
   editingSaleId = t.id;
   editingSaleItems = (t.items||[]).map(i=>({...i}));
-  editingSaleMeta = { studentCode: t.studentCode||'', payment: t.payment||'สด', time: t.time||'' };
+  editingSaleMeta = { studentCode: t.studentCode||'', transferAmount: getSplit(t).transfer, time: t.time||'' };
   renderSummary();
 }
 
@@ -1004,8 +1036,8 @@ function renderSummary(){
   const todays = allTransactions.filter(t=>t.date===tKey);
   const totalRevenue = todays.reduce((s,t)=>s+(t.total||0),0);
   const totalItems = todays.reduce((s,t)=> s+(t.items||[]).reduce((a,it)=>a+it.qty,0),0);
-  const cash = todays.filter(t=>t.payment==='สด').reduce((s,t)=>s+(t.total||0),0);
-  const transfer = todays.filter(t=>t.payment==='โอน').reduce((s,t)=>s+(t.total||0),0);
+  const cash = todays.reduce((s,t)=>s+getSplit(t).cash, 0);
+  const transfer = todays.reduce((s,t)=>s+getSplit(t).transfer, 0);
 
   let html = `<div class="stat-row">
     <div class="stat-card"><div class="k">ยอดขายวันนี้</div><div class="v">${baht(totalRevenue)}</div></div>
@@ -1019,6 +1051,8 @@ function renderSummary(){
   if (editingSaleId){
     const t = allTransactions.find(x=>x.id===editingSaleId);
     const liveTotal = (editingSaleItems||[]).reduce((s,i)=>s+i.qty*i.price,0);
+    const seTransferVal = Math.max(0, Math.min(Number(editingSaleMeta.transferAmount)||0, liveTotal));
+    const seCashVal = liveTotal - seTransferVal;
     html += `<div class="edit-mode-note"><span>แก้ไขรายการ — ${t?t.date:''}</span><button id="cancelSaleEdit">ยกเลิก</button></div>`;
     html += `<div class="sale-editor">`;
     html += `<div class="se-field-row">
@@ -1026,11 +1060,9 @@ function renderSummary(){
       <div><label class="small">เวลา</label><input type="text" id="seTime" value="${escapeHtml(editingSaleMeta.time)}" placeholder="เช่น 13:45"></div>
     </div>`;
     html += `<div style="margin-bottom:12px;">
-      <label class="small">วิธีชำระเงิน</label>
-      <div class="pay-row" style="margin-top:4px;">
-        <div class="pay-chip ${editingSaleMeta.payment!=='โอน'?'active':''}" data-se-pay="สด">💵 สด</div>
-        <div class="pay-chip ${editingSaleMeta.payment==='โอน'?'active':''}" data-se-pay="โอน">📱 โอน</div>
-      </div>
+      <label class="small">จำนวนเงินโอน (ที่เหลือถือเป็นเงินสด)</label>
+      <input type="number" id="seTransferAmount" min="0" step="0.01" value="${editingSaleMeta.transferAmount||''}" placeholder="0">
+      <div id="seSplitPreview" style="font-size:11.5px; color:var(--ink-soft); margin-top:5px; font-family:'IBM Plex Mono',monospace;">เงินสด ${baht(seCashVal)} · เงินโอน ${baht(seTransferVal)}</div>
     </div>`;
     if (!editingSaleItems || !editingSaleItems.length){
       html += `<div class="empty-note">ไม่มีสินค้าในรายการนี้</div>`;
@@ -1111,7 +1143,7 @@ function renderSummary(){
                   <span class="tl-time">🕐 ${t.time||''}</span>
                   <span class="tl-total">${baht(t.total)}</span>
                 </div>
-                <span class="tl-seller">${escapeHtml(seller)} · ${t.payment||'สด'}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
+                <span class="tl-seller">${escapeHtml(seller)} · ${paymentSummary(t)}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
                 <div class="tl-items">${itemLines}</div>
               </div>`;
             }).join('')}
@@ -1199,10 +1231,15 @@ function renderSummary(){
     if (it){ it.qty -= 1; if (it.qty<=0) editingSaleItems.splice(idx,1); }
     renderSummary();
   }));
-  el.querySelectorAll('[data-se-pay]').forEach(b=>b.addEventListener('click', ()=>{
-    editingSaleMeta.payment = b.dataset.sePay;
-    renderSummary();
-  }));
+  const seTransferInput = document.getElementById('seTransferAmount');
+  if (seTransferInput) seTransferInput.addEventListener('input', e=>{
+    editingSaleMeta.transferAmount = e.target.value;
+    const liveTotal = (editingSaleItems||[]).reduce((s,i)=>s+i.qty*i.price,0);
+    const tv = Math.max(0, Math.min(Number(editingSaleMeta.transferAmount)||0, liveTotal));
+    const cv = liveTotal - tv;
+    const preview = document.getElementById('seSplitPreview');
+    if (preview) preview.textContent = `เงินสด ${baht(cv)} · เงินโอน ${baht(tv)}`;
+  });
   const seStudentCode = document.getElementById('seStudentCode');
   if (seStudentCode) seStudentCode.addEventListener('input', e=>{ editingSaleMeta.studentCode = e.target.value; });
   const seTime = document.getElementById('seTime');
@@ -1226,10 +1263,12 @@ function renderSummary(){
           toast('ลบรายการแล้ว (ไม่มีสินค้าเหลือ)');
         } else {
           const total = finalItems.reduce((s,i)=>s+i.subtotal,0);
+          const transferAmount = Math.max(0, Math.min(Number(editingSaleMeta.transferAmount)||0, total));
+          const cashAmount = total - transferAmount;
           await updateDoc(doc(db,'uniform_transactions', t.id), {
             items: finalItems, total,
             studentCode: codeVal,
-            payment: editingSaleMeta.payment || 'สด',
+            cashAmount, transferAmount,
             time: (editingSaleMeta.time||'').trim() || t.time
           });
           toast('บันทึกการแก้ไขแล้ว');
@@ -1244,6 +1283,27 @@ function renderSummary(){
   });
 }
 
+/* Allocates a transaction's cash/transfer split across its item lines,
+   proportional to each item's share of the total (last item absorbs rounding). */
+function allocateItemSplit(t){
+  const { transfer } = getSplit(t);
+  const items = t.items || [];
+  const total = t.total || items.reduce((s,i)=>s+i.subtotal,0);
+  if (total <= 0) return items.map(it=>({ item:it, cashAmt:0, transferAmt:0 }));
+  let remainingTransfer = transfer;
+  return items.map((it, idx) => {
+    let tAmt;
+    if (idx === items.length - 1){
+      tAmt = remainingTransfer;
+    } else {
+      tAmt = Math.round(it.subtotal * transfer / total * 100) / 100;
+      remainingTransfer -= tAmt;
+    }
+    tAmt = Math.max(0, Math.min(tAmt, it.subtotal));
+    return { item: it, cashAmt: it.subtotal - tAmt, transferAmt: tAmt };
+  });
+}
+
 function copyDayText(dk){
   const list = allTransactions.filter(t=>t.date===dk).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
   if (!list.length){ toast('ไม่มีข้อมูลให้คัดลอก'); return; }
@@ -1251,10 +1311,8 @@ function copyDayText(dk){
   // same column order as the Excel export: รหัส, ชื่อสินค้า, ไซส์, ราคา, จำนวน, สด, โอน, เวลา
   const lines = [];
   list.forEach(t=>{
-    (t.items||[]).forEach(it=>{
-      const cashAmt = t.payment==='โอน' ? '' : it.subtotal;
-      const transferAmt = t.payment==='โอน' ? it.subtotal : '';
-      lines.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt, transferAmt, t.time].join('\t'));
+    allocateItemSplit(t).forEach(({item:it, cashAmt, transferAmt})=>{
+      lines.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt||'', transferAmt||'', t.time].join('\t'));
     });
   });
   navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('คัดลอกแล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
@@ -1268,11 +1326,9 @@ function downloadXlsx(dk){
   const rows = [[dk], ["รหัส","ชื่อสินค้า","ไซส์","ราคา","จำนวน","สด","โอน","เวลา"]];
   let sumCash = 0, sumTransfer = 0;
   list.forEach(t=>{
-    (t.items||[]).forEach(it=>{
-      const cashAmt = t.payment==='โอน' ? '' : it.subtotal;
-      const transferAmt = t.payment==='โอน' ? it.subtotal : '';
-      if (t.payment==='โอน') sumTransfer += it.subtotal; else sumCash += it.subtotal;
-      rows.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt, transferAmt, t.time]);
+    allocateItemSplit(t).forEach(({item:it, cashAmt, transferAmt})=>{
+      sumCash += cashAmt; sumTransfer += transferAmt;
+      rows.push([t.studentCode||'', it.categoryLabel, it.size, it.price, it.qty, cashAmt||'', transferAmt||'', t.time]);
     });
   });
   rows.push(["","","","","ยอดเงินรวม", sumCash, sumTransfer, ""]);
