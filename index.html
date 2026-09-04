@@ -205,10 +205,13 @@
   }
   .time-log-row{padding:6px 0; border-bottom:1px dotted var(--line); position:relative;}
   .time-log-row:last-child{border-bottom:none;}
-  .time-log-row .tl-top{display:flex; justify-content:space-between; font-size:12px; padding-right:26px;}
+  .time-log-row .tl-top{display:flex; justify-content:space-between; align-items:baseline; font-size:12px; padding-right:26px;}
   .time-log-row .tl-time{font-family:'IBM Plex Mono',monospace; color:var(--ink); font-weight:600;}
-  .time-log-row .tl-seller{color:var(--ink-soft); font-size:11.5px;}
-  .time-log-row .tl-items{font-size:11.5px; color:var(--ink-soft); margin-top:2px; padding-right:26px;}
+  .time-log-row .tl-total{font-family:'IBM Plex Mono',monospace; color:var(--stamp); font-weight:700; font-size:12.5px;}
+  .time-log-row .tl-seller{color:var(--ink-soft); font-size:11.5px; display:block; margin-top:1px;}
+  .time-log-row .tl-items{font-size:11.5px; color:var(--ink-soft); margin-top:4px; padding-right:26px;}
+  .item-line{display:flex; justify-content:space-between; padding:1px 0;}
+  .item-line span:last-child{font-family:'IBM Plex Mono',monospace; flex-shrink:0; padding-left:8px;}
   .time-log-row .tl-actions{display:flex; gap:8px; margin-top:6px;}
   .tl-quick-edit{
     position:absolute; top:4px; right:0; width:22px; height:22px; border-radius:50%;
@@ -1056,13 +1059,15 @@ function renderSummary(){
       html += `<div class="empty-note">ไม่มีรายการขายในช่วงที่เลือก</div>`;
     } else {
       sorted.forEach(t=>{
-        const itemsStr = (t.items||[]).map(i=>`${i.categoryLabel} ไซส์ ${i.size} x${i.qty}`).join(', ');
+        const itemLines = (t.items||[]).map(i=>
+          `<div class="item-line"><span>${i.categoryLabel} ไซส์ ${i.size} ×${i.qty}</span><span>${baht(i.subtotal)}</span></div>`
+        ).join('');
         html += `<div class="sale-entry">
           <div class="se-top">
             <span class="se-meta">${t.date} · ${t.time}${t.seller?' · '+escapeHtml(t.seller):''}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
             <span class="se-total">${baht(t.total)}</span>
           </div>
-          <div class="se-items">${itemsStr}</div>
+          <div class="se-items">${itemLines}</div>
           <div class="se-actions">
             <button class="se-editbtn" data-editsale="${t.id}">✎ แก้ไขรายการ</button>
             <button class="se-del" data-sale="${t.id}">🗑 ลบทั้งหมด</button>
@@ -1097,11 +1102,17 @@ function renderSummary(){
             <div class="time-log-label">บันทึกเวลาการขาย (${daySales.length} รายการ)</div>
             ${daySales.map(t=>{
               const seller = t.seller || 'ไม่ระบุชื่อ';
-              const itemsStr = (t.items||[]).map(i=>`${i.categoryLabel} #${i.size} x${i.qty}`).join(', ');
+              const itemLines = (t.items||[]).map(i=>
+                `<div class="item-line"><span>${i.categoryLabel} #${i.size} ×${i.qty}</span><span>${baht(i.subtotal)}</span></div>`
+              ).join('');
               return `<div class="time-log-row">
                 <button class="tl-quick-edit" data-quickedit="${t.id}" title="แก้ไขรายการนี้">✎</button>
-                <div class="tl-top"><span class="tl-time">🕐 ${t.time||''}</span><span class="tl-seller">${escapeHtml(seller)} · ${t.payment||'สด'}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span></div>
-                <div class="tl-items">${itemsStr}</div>
+                <div class="tl-top">
+                  <span class="tl-time">🕐 ${t.time||''}</span>
+                  <span class="tl-total">${baht(t.total)}</span>
+                </div>
+                <span class="tl-seller">${escapeHtml(seller)} · ${t.payment||'สด'}${t.studentCode?' · รหัส '+escapeHtml(t.studentCode):''}</span>
+                <div class="tl-items">${itemLines}</div>
               </div>`;
             }).join('')}
             <button class="day-copy-btn" data-copyday="${dk}">📋 คัดลอกข้อมูลวันนี้ (${dk})</button>
