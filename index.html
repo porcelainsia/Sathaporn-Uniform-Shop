@@ -1445,20 +1445,79 @@ function copyStockText(){
   const lines = rows.map(r=>r.join('\t'));
   navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('คัดลอกสต็อกแล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
 }
+/* Aggregates sold qty/subtotal per size per date, scoped to one category. */
+function salesByDateForCategory(catKey){
+  const map = {}; // date -> size -> {qty, sub}
+  allTransactions.forEach(t=>{
+    (t.items||[]).forEach(it=>{
+      if (it.category !== catKey) return;
+      if (!map[t.date]) map[t.date] = {};
+      if (!map[t.date][it.size]) map[t.date][it.size] = { qty:0, sub:0 };
+      map[t.date][it.size].qty += it.qty;
+      map[t.date][it.size].sub += it.subtotal;
+    });
+  });
+  return map;
+}
+function sanitizeSheetName(name){
+  return name.replace(/[:\\/?*\[\]]/g, '').slice(0, 31);
+}
 async function downloadStockXlsx(){
+  const wb = XLSX.utils.book_new();
+
+  // Overview sheet — quick reference across every category.
   const rows = buildStockRows();
   const totalReceived = rows.reduce((s,r)=>s+r[5],0);
   const totalRemaining = rows.reduce((s,r)=>s+r[6],0);
   const totalSold = rows.reduce((s,r)=>s+r[7],0);
-  const aoa = [
+  const overviewAoa = [
     [todayKey()],
     ["หมวดหมู่","ระดับชั้น","เพศ","ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"],
     ...rows,
     ["","","","","ยอดรวม", totalReceived, totalRemaining, totalSold]
   ];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "สต็อก");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(overviewAoa), "ภาพรวมทั้งหมด");
+
+  // One sheet per category — stock summary + full sales-by-date history.
+  CATEGORIES.forEach(cat=>{
+    const aoa = [];
+    aoa.push([`${cat.label} (${cat.sub})`]);
+    aoa.push([]);
+    aoa.push(["สรุปสต็อกปัจจุบัน"]);
+    aoa.push(["ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"]);
+    let catReceived=0, catRemaining=0, catSold=0;
+    cat.sizes.forEach(size=>{
+      const id = pid(cat.key,size);
+      const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
+      const sold = (p.received||0) - (p.remaining||0);
+      catReceived += p.received||0; catRemaining += p.remaining||0; catSold += sold;
+      aoa.push([size, p.price||0, p.received||0, p.remaining||0, sold]);
+    });
+    aoa.push(["ยอดรวม","", catReceived, catRemaining, catSold]);
+    aoa.push([]);
+    aoa.push(["ประวัติการขายตามวันที่ (เรียงตามวันที่)"]);
+    aoa.push(["วันที่","ไซส์","จำนวนที่ขาย","ยอดขาย (บาท)"]);
+    const byDate = salesByDateForCategory(cat.key);
+    const dateKeys = Object.keys(byDate).sort();
+    let sumQty=0, sumBaht=0;
+    if (!dateKeys.length){
+      aoa.push(["ยังไม่มีการขายในหมวดหมู่นี้","","",""]);
+    } else {
+      dateKeys.forEach(dk=>{
+        const sizesSold = Object.keys(byDate[dk]).sort((a,b)=> cat.sizes.indexOf(a)-cat.sizes.indexOf(b));
+        sizesSold.forEach(size=>{
+          const { qty, sub } = byDate[dk][size];
+          sumQty += qty; sumBaht += sub;
+          aoa.push([dk, size, qty, sub]);
+        });
+      });
+      aoa.push(["","ยอดรวม", sumQty, sumBaht]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:14},{wch:10},{wch:14},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(cat.label));
+  });
+
   XLSX.writeFile(wb, `สต็อกเครื่องแบบนักเรียน_${todayKey()}.xlsx`);
 }
 
