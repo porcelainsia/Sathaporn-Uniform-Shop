@@ -1369,6 +1369,10 @@ function renderStock(){
   }
 
   let html = `<div class="relock-row"><button class="relock-btn" id="relockBtn">🔒 ล็อกอีกครั้ง</button></div>
+    <div class="export-row" style="margin-bottom:14px;">
+      <button class="export-btn" id="copyStockBtn">📋 คัดลอกสต็อก</button>
+      <button class="export-btn btn-xlsx" id="stockXlsxBtn">⬇️ Excel สต็อก</button>
+    </div>
     <div class="admin-hint">แก้ไขราคา / จำนวนรับเข้า / คงเหลือ แล้วออกจากช่องเพื่อบันทึกอัตโนมัติ</div>`;
 
   CATEGORIES.forEach(cat=>{
@@ -1394,6 +1398,8 @@ function renderStock(){
   el.innerHTML = html;
 
   document.getElementById('relockBtn').addEventListener('click', ()=>{ adminUnlocked = false; renderStock(); renderSummaryList(); });
+  document.getElementById('copyStockBtn').addEventListener('click', copyStockText);
+  document.getElementById('stockXlsxBtn').addEventListener('click', downloadStockXlsx);
   el.querySelectorAll('input[data-field]').forEach(inp=>{
     inp.addEventListener('change', async e=>{
       const id = e.target.dataset.id;
@@ -1415,6 +1421,45 @@ function renderStock(){
       }
     });
   });
+}
+
+/* ---------------- Stock export ---------------- */
+const LEVEL_LABELS = { primary: "ประถม", kg: "อนุบาล" };
+function genderLabelFor(cat){ return cat.genders.length>1 ? cat.genders.join('/') : cat.genders[0]; }
+function buildStockRows(){
+  const rows = [];
+  CATEGORIES.forEach(cat=>{
+    cat.sizes.forEach(size=>{
+      const id = pid(cat.key,size);
+      const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
+      const sold = (p.received||0) - (p.remaining||0);
+      rows.push([cat.label, LEVEL_LABELS[cat.level]||'', genderLabelFor(cat), size, p.price||0, p.received||0, p.remaining||0, sold]);
+    });
+  });
+  return rows;
+}
+function copyStockText(){
+  // Tab-separated, content only (no header row) — one row per size:
+  // หมวดหมู่, ระดับชั้น, เพศ, ไซส์, ราคา, รับเข้าทั้งหมด, คงเหลือ, ขายไปแล้ว
+  const rows = buildStockRows();
+  const lines = rows.map(r=>r.join('\t'));
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('คัดลอกสต็อกแล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ'));
+}
+async function downloadStockXlsx(){
+  const rows = buildStockRows();
+  const totalReceived = rows.reduce((s,r)=>s+r[5],0);
+  const totalRemaining = rows.reduce((s,r)=>s+r[6],0);
+  const totalSold = rows.reduce((s,r)=>s+r[7],0);
+  const aoa = [
+    [todayKey()],
+    ["หมวดหมู่","ระดับชั้น","เพศ","ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"],
+    ...rows,
+    ["","","","","ยอดรวม", totalReceived, totalRemaining, totalSold]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "สต็อก");
+  XLSX.writeFile(wb, `สต็อกเครื่องแบบนักเรียน_${todayKey()}.xlsx`);
 }
 
 /* ---------------- Modal ---------------- */
