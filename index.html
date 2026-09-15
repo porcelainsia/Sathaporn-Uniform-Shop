@@ -1476,10 +1476,22 @@ const XLS_BASE_FONT   = { name: "TH Sarabun New", size: 16 };
 const XLS_HEADER_FONT = { name: "TH Sarabun New", size: 16, bold: true };
 const XLS_TOTAL_FONT  = { name: "TH Sarabun New", size: 16, bold: true };
 const XLS_TOTAL_BORDER = { top: { style: "thin" }, bottom: { style: "double" } };
-function styleRow(row, font, border){
-  row.eachCell({ includeEmpty: true }, cell=>{
+const XLS_FULL_BORDER  = { top:{style:"thin"}, bottom:{style:"thin"}, left:{style:"thin"}, right:{style:"thin"} };
+const XLS_HEADER_FILL  = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } };
+const XLS_CURRENCY_FMT = '_-"฿"* #,##0_-;\\-"฿"* #,##0_-;_-"฿"* "-"??_-;_-@_-';
+const THAI_MONTH_FULL = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+function thaiLongDate(dateKeyStr){
+  // dateKeyStr is "YYYY-MM-DD"
+  const [y,m,d] = dateKeyStr.split('-').map(Number);
+  const yearBE = y + 543;
+  return `${d} ${THAI_MONTH_FULL[m-1]} ${yearBE}`;
+}
+function styleRow(row, font, border, fill, moneyCols){
+  row.eachCell({ includeEmpty: true }, (cell, colNumber)=>{
     cell.font = font;
     if (border) cell.border = border;
+    if (fill) cell.fill = fill;
+    if (moneyCols && moneyCols.includes(colNumber)) cell.numFmt = XLS_CURRENCY_FMT;
   });
 }
 async function downloadStockXlsx(){
@@ -1494,10 +1506,10 @@ async function downloadStockXlsx(){
   const totalEarned = rows.reduce((s,r)=>s+r[8],0);
 
   const ov = wb.addWorksheet("ภาพรวมทั้งหมด");
-  styleRow(ov.addRow([todayKey()]), XLS_HEADER_FONT);
-  styleRow(ov.addRow(["หมวดหมู่","ระดับชั้น","เพศ","ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว","จำนวนเงินที่ได้รับ"]), XLS_HEADER_FONT);
-  rows.forEach(r=> styleRow(ov.addRow(r), XLS_BASE_FONT));
-  styleRow(ov.addRow(["","","","","ยอดรวม", totalReceived, totalRemaining, totalSold, totalEarned]), XLS_TOTAL_FONT, XLS_TOTAL_BORDER);
+  styleRow(ov.addRow([thaiLongDate(todayKey())]), XLS_HEADER_FONT);
+  styleRow(ov.addRow(["หมวดหมู่","ระดับชั้น","เพศ","ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว","จำนวนเงินที่ได้รับ"]), XLS_HEADER_FONT, XLS_FULL_BORDER, XLS_HEADER_FILL);
+  rows.forEach(r=> styleRow(ov.addRow(r), XLS_BASE_FONT, XLS_FULL_BORDER, null, [5,9]));
+  styleRow(ov.addRow(["","","","","ยอดรวม", totalReceived, totalRemaining, totalSold, totalEarned]), XLS_TOTAL_FONT, XLS_TOTAL_BORDER, null, [9]);
   ov.columns = [{width:20},{width:12},{width:10},{width:8},{width:10},{width:14},{width:10},{width:12},{width:18}];
 
   // One sheet per category — stock summary + full sales-by-date history.
@@ -1506,34 +1518,34 @@ async function downloadStockXlsx(){
     styleRow(ws.addRow([`${cat.label} (${cat.sub})`]), XLS_HEADER_FONT);
     ws.addRow([]);
     styleRow(ws.addRow(["สรุปสต็อกปัจจุบัน"]), XLS_HEADER_FONT);
-    styleRow(ws.addRow(["ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"]), XLS_HEADER_FONT);
+    styleRow(ws.addRow(["ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"]), XLS_HEADER_FONT, XLS_FULL_BORDER, XLS_HEADER_FILL);
     let catReceived=0, catRemaining=0, catSold=0;
     cat.sizes.forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
       const sold = (p.received||0) - (p.remaining||0);
       catReceived += p.received||0; catRemaining += p.remaining||0; catSold += sold;
-      styleRow(ws.addRow([size, p.price||0, p.received||0, p.remaining||0, sold]), XLS_BASE_FONT);
+      styleRow(ws.addRow([size, p.price||0, p.received||0, p.remaining||0, sold]), XLS_BASE_FONT, XLS_FULL_BORDER, null, [2]);
     });
     styleRow(ws.addRow(["ยอดรวม","", catReceived, catRemaining, catSold]), XLS_TOTAL_FONT, XLS_TOTAL_BORDER);
     ws.addRow([]);
     styleRow(ws.addRow(["ประวัติการขายตามวันที่ (เรียงตามวันที่)"]), XLS_HEADER_FONT);
-    styleRow(ws.addRow(["วันที่","ไซส์","จำนวนที่ขาย","ยอดขาย (บาท)"]), XLS_HEADER_FONT);
+    styleRow(ws.addRow(["วันที่","ไซส์","จำนวนที่ขาย","ยอดขาย (บาท)"]), XLS_HEADER_FONT, XLS_FULL_BORDER, XLS_HEADER_FILL);
     const byDate = salesByDateForCategory(cat.key);
     const dateKeys = Object.keys(byDate).sort();
     let sumQty=0, sumBaht=0;
     if (!dateKeys.length){
-      styleRow(ws.addRow(["ยังไม่มีการขายในหมวดหมู่นี้","","",""]), XLS_BASE_FONT);
+      styleRow(ws.addRow(["ยังไม่มีการขายในหมวดหมู่นี้","","",""]), XLS_BASE_FONT, XLS_FULL_BORDER);
     } else {
       dateKeys.forEach(dk=>{
         const sizesSold = Object.keys(byDate[dk]).sort((a,b)=> cat.sizes.indexOf(a)-cat.sizes.indexOf(b));
         sizesSold.forEach(size=>{
           const { qty, sub } = byDate[dk][size];
           sumQty += qty; sumBaht += sub;
-          styleRow(ws.addRow([dk, size, qty, sub]), XLS_BASE_FONT);
+          styleRow(ws.addRow([thaiLongDate(dk), size, qty, sub]), XLS_BASE_FONT, XLS_FULL_BORDER, null, [4]);
         });
       });
-      styleRow(ws.addRow(["","ยอดรวม", sumQty, sumBaht]), XLS_TOTAL_FONT, XLS_TOTAL_BORDER);
+      styleRow(ws.addRow(["","ยอดรวม", sumQty, sumBaht]), XLS_TOTAL_FONT, XLS_TOTAL_BORDER, null, [4]);
     }
     ws.columns = [{width:16},{width:10},{width:14},{width:14}];
   });
