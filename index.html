@@ -1526,10 +1526,15 @@ function autoFitColumns(ws, fixedCols){
   const colCount = Math.max(ws.columnCount||0, ...Object.keys(maxLens).map(Number), 0);
   for (let c=1; c<=colCount; c++){
     if (fixedCols && fixedCols[c]){
-      ws.getColumn(c).width = fixedCols[c];
+      ws.getColumn(c).width = fixedCols[c] === 9 ? 9.01 : fixedCols[c];
     } else {
       const len = maxLens[c] || 6;
-      ws.getColumn(c).width = Math.min(Math.max(len + 2, 6), 32);
+      let w = Math.min(Math.max(len + 2, 6), 32);
+      // ExcelJS silently drops a column's width from the saved file when it's
+      // exactly 9 (its internal default), leaving that one column un-sized —
+      // nudge it a hair so the explicit width always actually gets written.
+      if (w === 9) w = 9.01;
+      ws.getColumn(c).width = w;
     }
   }
 }
