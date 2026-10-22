@@ -249,6 +249,12 @@
   }
   .stock-cat-head .meta{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);}
   .stock-row{margin-bottom:8px;}
+  .add-size-btn{width:100%; margin-top:2px; padding:10px; border:1.5px dashed var(--line); border-radius:10px; background:transparent; color:var(--ink-soft); font-size:13px; font-weight:600; cursor:pointer;}
+  .rh-del{margin-left:8px; border:0; background:transparent; color:#c0392b; font-size:14px; cursor:pointer; padding:2px 6px;}
+  .rh-add{border:0; background:transparent; color:var(--ink-soft); font-weight:600; font-size:12px; cursor:pointer; padding:4px 0;}
+  .m-field{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--ink-soft); margin-bottom:10px;}
+  .m-check{display:flex; align-items:center; gap:8px; font-size:13px; margin:4px 0;}
+  .m-note{font-size:11px; color:var(--ink-soft); margin-bottom:10px;}
   .stock-row-body{
     background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px 12px;
   }
@@ -291,7 +297,8 @@
     display:flex; justify-content:space-between; gap:10px;
     font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);
   }
-  .restock-history .rh-qty{color:var(--ink); font-weight:600;}
+  .restock-history .rh-qty{color:var(--ink); font-weight:600; margin-left:auto;}
+  .restock-history .rh-date{flex:1;}
   .restock-history .rh-loading, .restock-history .rh-empty{font-style:italic;}
 
   .lock-banner{
@@ -425,7 +432,7 @@ import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/1
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
   collection, getDocs, addDoc, runTransaction, increment, serverTimestamp,
-  query, where
+  query, where, Timestamp, deleteField
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 /* Same Firebase project as the stationery shop app — separate top-level
@@ -509,6 +516,18 @@ const GENDER_GROUPS = [
   { key:"ชาย",  label:"ชาย" },
 ];
 function pid(catKey,size){ return catKey+"_"+size; }
+/* Sizes for a category = built-in list + any sizes added later in the stock tab (stored only in Firestore). */
+function sizesFor(cat){
+  const known = cat.sizes.slice();
+  const extra = [];
+  Object.keys(PRODUCTS).forEach(id=>{
+    const p = PRODUCTS[id];
+    if (p && p.category===cat.key && p.size!=null && known.indexOf(String(p.size))<0 && extra.indexOf(String(p.size))<0) extra.push(String(p.size));
+  });
+  extra.sort((a,b)=> a.localeCompare(b,'en',{numeric:true}));
+  return known.concat(extra);
+}
+function sizeCompare(cat,a,b){ const L=sizesFor(cat); return L.indexOf(a)-L.indexOf(b); }
 
 /* Starting price (p) and stock-on-hand (r) from the counting sheet you supplied.
    Used only the first time the app runs (when meta/uniform_seeded doesn't exist yet). */
@@ -838,7 +857,7 @@ function renderSell(){
   }
   visibleCats.forEach(cat=>{
     html += `<div class="cat-label">${cat.label}</div><div class="cat-sub">${cat.sub}</div><div class="grid">`;
-    cat.sizes.forEach(size=>{
+    sizesFor(cat).forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, remaining:0};
       const qty = cart[id]||0;
@@ -1013,7 +1032,7 @@ function openProductPicker(itemsArray, onDone){
     let html = '';
     CATEGORIES.forEach(cat=>{
       html += `<div class="cat-label">${cat.label}</div><div class="grid">`;
-      cat.sizes.forEach(size=>{
+      sizesFor(cat).forEach(size=>{
         const id = pid(cat.key,size);
         const p = PRODUCTS[id] || {price:0};
         const cur = itemsArray.find(x=>x.productId===id);
@@ -1410,8 +1429,93 @@ function formatHistoryDate(dateKey){
 function renderRestockHistoryHtml(id){
   const rows = restockHistoryCache[id];
   if (rows === undefined) return `<div class="rh-row rh-loading">กำลังโหลดประวัติ...</div>`;
-  if (!rows.length) return `<div class="rh-row rh-empty">ยังไม่มีประวัติการรับเข้า</div>`;
-  return rows.map(r=>`<div class="rh-row"><span class="rh-date">${formatHistoryDate(r.date)} ${r.time||''}</span><span class="rh-qty">+${r.qty||0}</span></div>`).join('');
+  let h = rows.length
+    ? rows.map(r=>`<div class="rh-row"><span class="rh-date">${formatHistoryDate(r.date)} ${r.time||''}</span><span class="rh-qty">+${r.qty||0}</span><button class="rh-del" data-rh-del="${r.id}" data-pid="${id}" title="ลบแถวนี้">✕</button></div>`).join('')
+    : `<div class="rh-row rh-empty">ยังไม่มีประวัติการรับเข้า</div>`;
+  h += `<div class="rh-row"><button class="rh-add" data-rh-add="${id}">＋ เพิ่มประวัติ</button></div>`;
+  return h;
+}
+// After the history changes, re-sync the product's "last received" display.
+async function syncLastRestock(id){
+  const rows = await listRestocks(id);
+  restockHistoryCache[id] = rows;
+  const fields = {};
+  if (rows.length){
+    fields.lastRestockQty = rows[0].qty||0;
+    const ms = rows[0].createdAt && rows[0].createdAt.toMillis ? rows[0].createdAt.toMillis() : 0;
+    if (ms) fields.receivedAt = Timestamp.fromMillis(ms);
+  } else {
+    fields.lastRestockQty = deleteField();
+    fields.receivedAt = deleteField();
+  }
+  await updateDoc(doc(db,'uniform_products',id), fields);
+}
+function openAddHistoryModal(id){
+  const p = PRODUCTS[id] || {};
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0'), mm = String(now.getMinutes()).padStart(2,'0');
+  openModal(`
+    <h3>เพิ่มประวัติรับเข้า — ${p.categoryLabel||''} #${p.size||''}</h3>
+    <label class="m-field">จำนวน<input type="number" min="1" id="rhQty" class="admin-code-input" placeholder="0"></label>
+    <label class="m-field">วันที่<input type="date" id="rhDate" class="admin-code-input" value="${todayKey()}"></label>
+    <label class="m-field">เวลา<input type="time" id="rhTime" class="admin-code-input" value="${hh}:${mm}"></label>
+    <label class="m-check"><input type="checkbox" id="rhAlso"> นับเพิ่มเข้า "รับเข้าทั้งหมด" และ "คงเหลือ" ด้วย</label>
+    <div class="m-note">ไม่ติ๊ก = บันทึกประวัติอย่างเดียว (สำหรับของที่อยู่ในสต็อกแล้ว)</div>
+    <div class="modal-actions">
+      <button class="btn-close" id="mCancel">ยกเลิก</button>
+      <button class="btn-copy" id="mOk">บันทึก</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const qty = parseInt(document.getElementById('rhQty').value,10);
+    const date = document.getElementById('rhDate').value;
+    const time = document.getElementById('rhTime').value || '00:00';
+    if (!qty || qty<1 || !date){ toast('กรอกจำนวนและวันที่'); return; }
+    const also = document.getElementById('rhAlso').checked;
+    try{
+      const when = new Date(date+'T'+time+':00');
+      const newTotal = (p.received||0) + (also?qty:0);
+      await addDoc(collection(db,'uniform_restocks'), {
+        date, time: when.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}),
+        productId:id, category:p.category||'', categoryLabel:p.categoryLabel||'', size:p.size||'',
+        qty, receivedTotal:newTotal, createdAt: Timestamp.fromDate(when)
+      });
+      if (also) await updateDoc(doc(db,'uniform_products',id), { received: increment(qty), remaining: increment(qty) });
+      await syncLastRestock(id);
+      closeModal(); toast('เพิ่มประวัติแล้ว'); renderStock();
+    }catch(err){ console.error('add history failed', err); toast('เพิ่มประวัติไม่สำเร็จ'); }
+  });
+}
+function openAddSizeModal(catKey){
+  const cat = CATEGORIES.find(c=>c.key===catKey);
+  openModal(`
+    <h3>เพิ่มไซส์ใหม่ — ${cat.label}</h3>
+    <label class="m-field">ไซส์<input type="text" id="nsSize" class="admin-code-input" placeholder="เช่น 54 หรือ XXXL" autocomplete="off"></label>
+    <label class="m-field">ราคา (บาท)<input type="number" min="0" step="0.01" id="nsPrice" class="admin-code-input" value="0"></label>
+    <label class="m-field">จำนวนที่รับเข้า<input type="number" min="0" id="nsQty" class="admin-code-input" value="0"></label>
+    <div class="modal-actions">
+      <button class="btn-close" id="mCancel">ยกเลิก</button>
+      <button class="btn-copy" id="mOk">เพิ่ม</button>
+    </div>`);
+  document.getElementById('mCancel').addEventListener('click', closeModal);
+  document.getElementById('mOk').addEventListener('click', async ()=>{
+    const size = document.getElementById('nsSize').value.trim();
+    const price = Math.max(0, parseFloat(document.getElementById('nsPrice').value)||0);
+    const qty = Math.max(0, parseInt(document.getElementById('nsQty').value,10)||0);
+    if (!size){ toast('ใส่ไซส์'); return; }
+    if (sizesFor(cat).indexOf(size)>=0 && PRODUCTS[pid(catKey,size)]){ toast('มีไซส์นี้อยู่แล้ว'); return; }
+    const id = pid(catKey,size);
+    try{
+      const fields = { category:catKey, categoryLabel:cat.label, categorySub:cat.sub, size, price, received:qty, remaining:qty };
+      if (qty>0){ fields.receivedAt = serverTimestamp(); fields.lastRestockQty = qty; }
+      await setDoc(doc(db,'uniform_products',id), fields, { merge:true });
+      if (qty>0){
+        await addRestockLog({ date: todayKey(), time: new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}),
+          productId:id, category:catKey, categoryLabel:cat.label, size, qty, receivedTotal:qty });
+      }
+      closeModal(); toast('เพิ่มไซส์แล้ว');
+    }catch(err){ console.error('add size failed', err); toast('เพิ่มไซส์ไม่สำเร็จ'); }
+  });
 }
 // Stamps the "last received" time + denormalized last-restock-qty on the product
 // doc, and folds in the remaining-stock bump, all in one write.
@@ -1481,10 +1585,10 @@ function renderStock(){
     html += `<div class="empty-note">ไม่มีสินค้าตรงกับตัวกรองที่เลือก</div>`;
   }
   visibleCats.forEach(cat=>{
-    const totalRemaining = cat.sizes.reduce((s,size)=> s + ((PRODUCTS[pid(cat.key,size)]||{}).remaining||0), 0);
+    const totalRemaining = sizesFor(cat).reduce((s,size)=> s + ((PRODUCTS[pid(cat.key,size)]||{}).remaining||0), 0);
     html += `<div class="stock-cat">
       <div class="stock-cat-head"><h4>${cat.label}</h4><span class="meta">คงเหลือรวม ${totalRemaining}</span></div>`;
-    cat.sizes.forEach(size=>{
+    sizesFor(cat).forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
       const sold = (p.received||0) - (p.remaining||0);
@@ -1507,9 +1611,29 @@ function renderStock(){
         </div>
       </div>`;
     });
-    html += `</div>`;
+    html += `<button class="add-size-btn" data-add-size="${cat.key}">＋ เพิ่มไซส์</button></div>`;
   });
   el.innerHTML = html;
+
+  el.querySelectorAll('[data-add-size]').forEach(b=> b.addEventListener('click', ()=> openAddSizeModal(b.dataset.addSize)));
+  el.querySelectorAll('[data-rh-add]').forEach(b=> b.addEventListener('click', ()=> openAddHistoryModal(b.dataset.rhAdd)));
+  el.querySelectorAll('[data-rh-del]').forEach(b=> b.addEventListener('click', ()=>{
+    const rid = b.dataset.rhDel, id = b.dataset.pid;
+    const r = (restockHistoryCache[id]||[]).find(x=>x.id===rid) || {};
+    openModal(`
+      <h3>ลบแถวประวัตินี้?</h3>
+      <p>${formatHistoryDate(r.date)} ${r.time||''} · +${r.qty||0}</p>
+      <div class="m-note">ลบเฉพาะประวัติ ไม่เปลี่ยนจำนวน "รับเข้าทั้งหมด" หรือ "คงเหลือ" (แก้ได้ในช่องของแต่ละไซส์)</div>
+      <div class="modal-actions">
+        <button class="btn-close" id="mCancel">ยกเลิก</button>
+        <button class="btn-copy" id="mOk">ลบ</button>
+      </div>`);
+    document.getElementById('mCancel').addEventListener('click', closeModal);
+    document.getElementById('mOk').addEventListener('click', async ()=>{
+      try{ await deleteDoc(doc(db,'uniform_restocks',rid)); await syncLastRestock(id); closeModal(); toast('ลบแล้ว'); renderStock(); }
+      catch(err){ console.error('delete history failed', err); toast('ลบไม่สำเร็จ'); }
+    });
+  }));
 
   document.getElementById('relockBtn').addEventListener('click', ()=>{ adminUnlocked = false; renderStock(); renderSummaryList(); });
   document.getElementById('copyStockBtn').addEventListener('click', copyStockText);
@@ -1574,7 +1698,7 @@ function genderLabelFor(cat){ return cat.genders.length>1 ? cat.genders.join('/'
 function buildStockRows(){
   const rows = [];
   CATEGORIES.filter(categoryVisible).forEach(cat=>{
-    cat.sizes.forEach(size=>{
+    sizesFor(cat).forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
       const sold = (p.received||0) - (p.remaining||0);
@@ -1700,7 +1824,7 @@ async function downloadStockXlsx(){
     styleRow(ws.addRow(["สรุปสต็อกปัจจุบัน"]), XLS_HEADER_FONT);
     styleRow(ws.addRow(["ไซส์","ราคา","รับเข้าทั้งหมด","คงเหลือ","ขายไปแล้ว"]), XLS_HEADER_FONT, XLS_FULL_BORDER, XLS_HEADER_FILL);
     let catReceived=0, catRemaining=0, catSold=0;
-    cat.sizes.forEach(size=>{
+    sizesFor(cat).forEach(size=>{
       const id = pid(cat.key,size);
       const p = PRODUCTS[id] || {price:0, received:0, remaining:0};
       const sold = (p.received||0) - (p.remaining||0);
@@ -1718,7 +1842,7 @@ async function downloadStockXlsx(){
       styleRow(ws.addRow(["ยังไม่มีการขายในหมวดหมู่นี้","","",""]), XLS_BASE_FONT, XLS_FULL_BORDER);
     } else {
       dateKeys.forEach(dk=>{
-        const sizesSold = Object.keys(byDate[dk]).sort((a,b)=> cat.sizes.indexOf(a)-cat.sizes.indexOf(b));
+        const sizesSold = Object.keys(byDate[dk]).sort((a,b)=> sizeCompare(cat,a,b));
         sizesSold.forEach(size=>{
           const { qty, sub } = byDate[dk][size];
           sumQty += qty; sumBaht += sub;
